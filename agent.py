@@ -1,15 +1,23 @@
 """
-Video Creator Agent - AI Assistant for Content Creators
+Video Creator Agent v2.0 - AI Assistant for Content Creators
 Supports: TikTok, Instagram Reels, Xiaohongshu, YouTube Shorts
+
+Features:
+- Enhanced error handling with retry mechanism
+- Improved AI prompts for better scripts
+- Usage statistics and analytics
+- Beautiful CLI output with colors and progress
 """
 
 import os
 import sys
 import json
 import shutil
+import time
 from datetime import datetime
 from pathlib import Path
-from openai import OpenAI
+from typing import Optional, Dict, Any, List
+from dataclasses import dataclass, asdict
 
 # Fix UTF-8 encoding on Windows
 if sys.platform == "win32":
@@ -23,28 +31,287 @@ load_dotenv()
 BASE_DIR = Path(__file__).parent
 IDEAS_FILE = BASE_DIR / "ideas" / "ideas.json"
 HISTORY_FILE = BASE_DIR / "history" / "activity_log.json"
+STATS_FILE = BASE_DIR / "history" / "statistics.json"
 PROJECTS_DIR = BASE_DIR / "projects"
 SCRIPTS_DIR = BASE_DIR / "scripts"
 
-client = OpenAI(
-    api_key=os.environ.get("OPENAI_API_KEY"),
-    base_url=os.environ.get("OPENAI_BASE_URL")
-)
+# Platform-specific configurations
+PLATFORM_CONFIGS = {
+    "tiktok": {
+        "name": "TikTok",
+        "duration": "15-60s",
+        "style": "Trendy, fast-paced, energetic",
+        "hook": "Must grab attention in 1 second",
+        "tips": "Use trending sounds, quick cuts, text overlays",
+        "hashtags": "#fyp #foryou #viral",
+        "emoji": "🎵"
+    },
+    "instagram": {
+        "name": "Instagram Reels",
+        "duration": "15-90s",
+        "style": "Aesthetic, polished, visual",
+        "hook": "Visual appeal + clear value proposition",
+        "tips": "High quality visuals, captions, consistent aesthetic",
+        "hashtags": "#reels #explore #viral",
+        "emoji": "📸"
+    },
+    "xiaohongshu": {
+        "name": "小红书 (Xiaohongshu)",
+        "duration": "30-180s",
+        "style": "Lifestyle, authentic, storytelling",
+        "hook": "Personal story + relatable moment",
+        "tips": "Be authentic, show daily life, share tips",
+        "hashtags": "#小红书 #分享 #生活",
+        "emoji": "📕"
+    },
+    "youtube_shorts": {
+        "name": "YouTube Shorts",
+        "duration": "15-60s",
+        "style": "SEO-focused, informative, engaging",
+        "hook": "Clear value proposition + keyword optimization",
+        "tips": "Optimize title, use keywords, strong CTA",
+        "hashtags": "#shorts #youtubeshorts #trending",
+        "emoji": "🎬"
+    }
+}
 
-# ============= TOOLS DEFINITION =============
+# ANSI Color codes for beautiful output
+class Colors:
+    HEADER = '\033[95m'
+    BLUE = '\033[94m'
+    CYAN = '\033[96m'
+    GREEN = '\033[92m'
+    YELLOW = '\033[93m'
+    RED = '\033[91m'
+    END = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
+
+# ============= STATISTICS TRACKING =============
+@dataclass
+class Statistics:
+    total_runs: int = 0
+    successful_runs: int = 0
+    failed_runs: int = 0
+    tool_calls: Dict[str, int] = None
+    total_duration: float = 0.0
+    last_run: str = None
+
+    def __post_init__(self):
+        if self.tool_calls is None:
+            self.tool_calls = {}
+
+    def to_dict(self):
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict):
+        return cls(**data)
+
+def load_statistics() -> Statistics:
+    """Load usage statistics from file"""
+    try:
+        if STATS_FILE.exists():
+            with open(STATS_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                return Statistics.from_dict(data)
+    except Exception:
+        pass
+    return Statistics()
+
+def save_statistics(stats: Statistics):
+    """Save usage statistics to file"""
+    STATS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(STATS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(stats.to_dict(), f, indent=2, ensure_ascii=False)
+
+# ============= ERROR HANDLING & RETRY =============
+class AgentError(Exception):
+    """Base exception for agent errors"""
+    pass
+
+def retry_with_backoff(
+    func,
+    max_retries: int = 3,
+    base_delay: float = 1.0,
+    backoff_factor: float = 2.0
+):
+    """Retry function with exponential backoff"""
+    last_error = None
+
+    for attempt in range(max_retries):
+        try:
+            return func()
+        except Exception as e:
+            last_error = e
+            if attempt < max_retries - 1:
+                delay = base_delay * (backoff_factor ** attempt)
+                print(f"{Colors.YELLOW}⚠️  Retry {attempt + 1}/{max_retries} after {delay:.1f}s{Colors.END}")
+                time.sleep(delay)
+            else:
+                print(f"{Colors.RED}❌ Max retries reached{Colors.END}")
+
+    raise last_error
+
+def validate_input(data: dict, required_fields: list) -> bool:
+    """Validate required input fields"""
+    for field in required_fields:
+        if field not in data or not data[field]:
+            raise ValueError(f"Missing required field: {field}")
+    return True
+
+def safe_execute(func, *args, **kwargs):
+    """Safely execute function with error handling"""
+    try:
+        return func(*args, **kwargs), None
+    except Exception as e:
+        return None, str(e)
+
+# ============= OPENAI CLIENT =============
+client = None
+
+def get_client():
+    """Get or create OpenAI client"""
+    global client
+    if client is None:
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            raise AgentError("OPENAI_API_KEY not found in environment variables")
+
+        client = OpenAI(
+            api_key=api_key,
+            base_url=os.environ.get("OPENAI_BASE_URL")
+        )
+    return client
+
+# ============= ENHANCED LOGGING =============
+def log_action(action: str, details: dict, success: bool = True):
+    """Enhanced logging with success/failure tracking"""
+    try:
+        if HISTORY_FILE.exists():
+            with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
+                history = json.load(f)
+        else:
+            history = []
+
+        log_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "action": action,
+            "details": details,
+            "success": success
+        }
+
+        history.append(log_entry)
+
+        # Keep only last 1000 entries
+        history = history[-1000:]
+
+        with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
+            json.dump(history, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print(f"{Colors.YELLOW}⚠️  Logging error: {e}{Colors.END}")
+
+def update_tool_stats(tool_name: str, success: bool = True):
+    """Update tool usage statistics"""
+    stats = load_statistics()
+    if tool_name not in stats.tool_calls:
+        stats.tool_calls[tool_name] = 0
+    if success:
+        stats.tool_calls[tool_name] += 1
+    save_statistics(stats)
+
+# ============= PRETTY PRINTING =============
+def print_header(text: str):
+    """Print formatted header"""
+    print(f"\n{Colors.BOLD}{Colors.CYAN}{'='*70}{Colors.END}")
+    print(f"{Colors.BOLD}{Colors.CYAN}{text.center(70)}{Colors.END}")
+    print(f"{Colors.BOLD}{Colors.CYAN}{'='*70}{Colors.END}\n")
+
+def print_success(text: str):
+    """Print success message"""
+    print(f"{Colors.GREEN}✅ {text}{Colors.END}")
+
+def print_error(text: str):
+    """Print error message"""
+    print(f"{Colors.RED}❌ {text}{Colors.END}")
+
+def print_warning(text: str):
+    """Print warning message"""
+    print(f"{Colors.YELLOW}⚠️  {text}{Colors.END}")
+
+def print_info(text: str):
+    """Print info message"""
+    print(f"{Colors.BLUE}ℹ️  {text}{Colors.END}")
+
+def print_tool_call(tool_name: str, args: dict):
+    """Print tool call with formatting"""
+    args_str = json.dumps(args, ensure_ascii=False)
+    print(f"{Colors.CYAN}   → {tool_name}({args_str}){Colors.END}")
+
+def print_tool_result(result: str, success: bool = True):
+    """Print tool result with formatting"""
+    if success:
+        preview = result[:100] + '...' if len(result) > 100 else result
+        print(f"{Colors.GREEN}   ← {preview}{Colors.END}\n")
+    else:
+        print(f"{Colors.RED}   ← {result}{Colors.END}\n")
+
+def print_platform_banner(platform: str):
+    """Print platform-specific banner"""
+    config = PLATFORM_CONFIGS.get(platform, PLATFORM_CONFIGS["tiktok"])
+    print(f"\n{Colors.BOLD}{config['emoji']} {config['name']}{Colors.END}")
+    print(f"{Colors.CYAN}Duration: {config['duration']}{Colors.END}")
+    print(f"{Colors.CYAN}Style: {config['style']}{Colors.END}")
+
+def show_statistics(stats: Statistics):
+    """Display usage statistics"""
+    print(f"\n{Colors.BOLD}📊 Usage Statistics{Colors.END}")
+    print(f"{Colors.CYAN}{'─'*40}{Colors.END}")
+
+    if stats.total_runs > 0:
+        success_rate = (stats.successful_runs / stats.total_runs) * 100
+        avg_duration = stats.total_duration / stats.total_runs
+        print(f"Total runs: {stats.total_runs}")
+        print(f"Success rate: {success_rate:.1f}%")
+        print(f"Avg duration: {avg_duration:.2f}s")
+    else:
+        print("No statistics yet")
+
+    if stats.tool_calls:
+        print(f"\n{Colors.BOLD}Tool Usage:{Colors.END}")
+        for tool, count in sorted(stats.tool_calls.items(), key=lambda x: x[1], reverse=True):
+            print(f"  {tool}: {count} calls")
+
+    print(f"{Colors.CYAN}{'─'*40}{Colors.END}\n")
+
+# ============= ENHANCED TOOLS DEFINITION =============
 tools = [
     {
         "type": "function",
         "function": {
             "name": "save_idea",
-            "description": "Save a video idea with title, description, tags and platform",
+            "description": "Save a video idea with title, description, tags and platform. Validates input and prevents duplicates.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "title": {"type": "string", "description": "Idea title"},
-                    "description": {"type": "string", "description": "Detailed description"},
-                    "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags for categorization"},
-                    "platform": {"type": "string", "enum": ["tiktok", "instagram", "xiaohongshu", "youtube_shorts"], "description": "Target platform"}
+                    "title": {
+                        "type": "string",
+                        "description": "Catchy idea title (min 3 chars)"
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Detailed description of the idea"
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Tags for categorization (e.g., ['lifestyle', 'productivity'])"
+                    },
+                    "platform": {
+                        "type": "string",
+                        "enum": ["tiktok", "instagram", "xiaohongshu", "youtube_shorts"],
+                        "description": "Target platform"
+                    }
                 },
                 "required": ["title", "description"]
             }
@@ -54,12 +321,13 @@ tools = [
         "type": "function",
         "function": {
             "name": "list_ideas",
-            "description": "List all saved ideas, optionally filter by platform or tags",
+            "description": "List all saved ideas with filtering options. Shows platform, tags, and creation date.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "platform": {"type": "string", "description": "Filter by platform"},
-                    "tag": {"type": "string", "description": "Filter by tag"}
+                    "tag": {"type": "string", "description": "Filter by tag"},
+                    "limit": {"type": "integer", "description": "Limit results (default: all)"}
                 }
             }
         }
@@ -68,13 +336,23 @@ tools = [
         "type": "function",
         "function": {
             "name": "create_script",
-            "description": "Generate a video script based on an idea or topic",
+            "description": "Generate an engaging, platform-specific video script using AI. Includes hook, main content, CTA, and hashtags.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "topic": {"type": "string", "description": "Topic or idea for the script"},
-                    "platform": {"type": "string", "description": "Target platform (tiktok, instagram, etc)"},
-                    "duration": {"type": "string", "description": "Target duration (e.g., '15 seconds', '30 seconds', '60 seconds')"}
+                    "platform": {
+                        "type": "string",
+                        "description": "Target platform (affects style and format)"
+                    },
+                    "duration": {
+                        "type": "string",
+                        "description": "Target duration (e.g., '15 seconds', '30 seconds', '60 seconds')"
+                    },
+                    "tone": {
+                        "type": "string",
+                        "description": "Tone of the script (e.g., 'energetic', 'calm', 'funny')"
+                    }
                 },
                 "required": ["topic"]
             }
@@ -84,15 +362,15 @@ tools = [
         "type": "function",
         "function": {
             "name": "save_script",
-            "description": "Save a script to a file",
+            "description": "Save generated script to file system with auto-naming if needed.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "filename": {"type": "string", "description": "Script filename"},
-                    "content": {"type": "string", "description": "Script content"},
-                    "is_final": {"type": "boolean", "description": "Save to final/ or drafts/"}
+                    "filename": {"type": "string", "description": "Script filename (auto-generated if not provided)"},
+                    "content": {"type": "string", "description": "Script content to save"},
+                    "is_final": {"type": "boolean", "description": "Save to final/ (true) or drafts/ (false)"}
                 },
-                "required": ["filename", "content"]
+                "required": ["content"]
             }
         }
     },
@@ -100,12 +378,12 @@ tools = [
         "type": "function",
         "function": {
             "name": "create_project",
-            "description": "Create a new video project with organized folders",
+            "description": "Create a new video project with organized folder structure (raw, edited, final) and metadata.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "project_name": {"type": "string", "description": "Name of the project"},
-                    "description": {"type": "string", "description": "Project description"}
+                    "project_name": {"type": "string", "description": "Name of the project (will be sanitized)"},
+                    "description": {"type": "string", "description": "Project description or concept"}
                 },
                 "required": ["project_name"]
             }
@@ -115,13 +393,17 @@ tools = [
         "type": "function",
         "function": {
             "name": "organize_video_file",
-            "description": "Move a video file to appropriate project folder (raw, edited, or final)",
+            "description": "Copy and organize video file to appropriate project folder. Updates project metadata.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "source_path": {"type": "string", "description": "Path to source video file"},
                     "project_name": {"type": "string", "description": "Target project name"},
-                    "file_type": {"type": "string", "enum": ["raw", "edited", "final"], "description": "Type of video file"}
+                    "file_type": {
+                        "type": "string",
+                        "enum": ["raw", "edited", "final"],
+                        "description": "Type of video file"
+                    }
                 },
                 "required": ["source_path", "project_name", "file_type"]
             }
@@ -131,7 +413,18 @@ tools = [
         "type": "function",
         "function": {
             "name": "list_projects",
-            "description": "List all projects with their status",
+            "description": "List all projects with detailed statistics including file counts and status.",
+            "parameters": {
+                "type": "object",
+                "properties": {}
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "show_stats",
+            "description": "Display usage statistics and analytics including tool usage and success rates.",
             "parameters": {
                 "type": "object",
                 "properties": {}
@@ -140,195 +433,351 @@ tools = [
     }
 ]
 
-# ============= TOOL IMPLEMENTATIONS =============
+# ============= ENHANCED TOOL IMPLEMENTATIONS =============
 
-def log_action(action, details):
-    """Log agent action to history"""
+def save_idea(title: str, description: str, tags: Optional[List[str]] = None, platform: str = "tiktok") -> str:
+    """Save a video idea with validation and duplicate check"""
     try:
-        with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
-            history = json.load(f)
-    except:
-        history = []
+        # Validate input
+        validate_input({"title": title, "description": description}, ["title", "description"])
 
-    history.append({
-        "timestamp": datetime.now().isoformat(),
-        "action": action,
-        "details": details
-    })
+        if len(title) < 3:
+            raise ValueError("Title must be at least 3 characters long")
 
-    with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
-        json.dump(history, f, indent=2, ensure_ascii=False)
+        # Load existing ideas
+        try:
+            with open(IDEAS_FILE, 'r', encoding='utf-8') as f:
+                ideas = json.load(f)
+        except:
+            ideas = []
 
-def save_idea(title, description, tags=None, platform="tiktok"):
-    """Save a video idea"""
+        # Check for duplicates
+        for idea in ideas:
+            if idea["title"].lower() == title.lower() and idea["platform"] == platform:
+                return f"⚠️  Idea '{title}' already exists for {platform}!"
+
+        # Create new idea
+        idea = {
+            "id": len(ideas) + 1,
+            "title": title.strip(),
+            "description": description.strip(),
+            "tags": [tag.strip() for tag in (tags or [])],
+            "platform": platform,
+            "created_at": datetime.now().isoformat(),
+            "status": "active"
+        }
+
+        ideas.append(idea)
+
+        # Save to file
+        IDEAS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(IDEAS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(ideas, f, indent=2, ensure_ascii=False)
+
+        log_action("save_idea", {"title": title, "platform": platform, "tags": len(tags or [])}, success=True)
+        update_tool_stats("save_idea", success=True)
+
+        return f"✅ Idea saved: '{title}' for {platform} with {len(tags or [])} tags"
+
+    except Exception as e:
+        log_action("save_idea", {"title": title, "error": str(e)}, success=False)
+        update_tool_stats("save_idea", success=False)
+        return f"❌ Error saving idea: {str(e)}"
+
+def list_ideas(platform: Optional[str] = None, tag: Optional[str] = None, limit: Optional[int] = None) -> str:
+    """List and filter ideas with pagination support"""
     try:
         with open(IDEAS_FILE, 'r', encoding='utf-8') as f:
             ideas = json.load(f)
     except:
-        ideas = []
+        return "No ideas found. Create your first idea!"
 
-    idea = {
-        "id": len(ideas) + 1,
-        "title": title,
-        "description": description,
-        "tags": tags or [],
-        "platform": platform,
-        "created_at": datetime.now().isoformat(),
-        "status": "active"
-    }
-
-    ideas.append(idea)
-
-    with open(IDEAS_FILE, 'w', encoding='utf-8') as f:
-        json.dump(ideas, f, indent=2, ensure_ascii=False)
-
-    log_action("save_idea", {"title": title, "platform": platform})
-
-    return f"✅ Idea saved: '{title}' for {platform} with {len(tags or [])} tags"
-
-def list_ideas(platform=None, tag=None):
-    """List and filter ideas"""
-    try:
-        with open(IDEAS_FILE, 'r', encoding='utf-8') as f:
-            ideas = json.load(f)
-    except:
-        ideas = []
-
+    # Apply filters
     if platform:
         ideas = [i for i in ideas if i.get("platform") == platform]
     if tag:
-        ideas = [i for i in ideas if tag in i.get("tags", [])]
+        ideas = [i for i in ideas if tag.lower() in [t.lower() for t in i.get("tags", [])]]
 
     if not ideas:
-        return "No ideas found. Create your first idea!"
+        return f"No ideas found matching criteria (platform: {platform}, tag: {tag})"
+
+    # Apply limit
+    if limit and limit < len(ideas):
+        ideas = ideas[:limit]
 
     result = f"\n📝 Found {len(ideas)} idea(s):\n\n"
     for idea in ideas:
+        config = PLATFORM_CONFIGS.get(idea['platform'], PLATFORM_CONFIGS["tiktok"])
         result += f"  [{idea['id']}] {idea['title']}\n"
-        result += f"      Platform: {idea['platform']} | Tags: {', '.join(idea['tags'])}\n"
+        result += f"      {config['emoji']} Platform: {idea['platform']} | Tags: {', '.join(idea['tags'])}\n"
         result += f"      Created: {idea['created_at'][:10]}\n\n"
 
+    log_action("list_ideas", {"count": len(ideas)}, success=True)
     return result
 
-def create_script(topic, platform="tiktok", duration="30 seconds"):
-    """Generate a script using AI"""
-    response = client.chat.completions.create(
-        model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
-        messages=[
-            {
-                "role": "system",
-                "content": f"You are a expert script writer for {platform} videos. Create engaging, platform-specific scripts."
-            },
-            {
-                "role": "user",
-                "content": f"Create a {duration} video script about: {topic}\n\nInclude:\n- Hook (first 2 seconds)\n- Main content\n- Call to action\n- Recommended hashtags"
-            }
-        ]
-    )
+def create_script(topic: str, platform: str = "tiktok", duration: str = "30 seconds", tone: str = "energetic") -> str:
+    """Generate an AI-powered script with platform-specific optimization"""
+    try:
+        config = PLATFORM_CONFIGS.get(platform, PLATFORM_CONFIGS["tiktok"])
 
-    script = response.choices[0].message.content
-    log_action("create_script", {"topic": topic, "platform": platform})
+        # Enhanced system prompt
+        system_prompt = f"""You are an expert script writer for {config['name']} videos.
 
-    return script
+Platform Characteristics:
+- Duration: {config['duration']}
+- Style: {config['style']}
+- Hook Strategy: {config['hook']}
+- Best Practices: {config['tips']}
 
-def save_script(filename, content, is_final=False):
-    """Save script to file"""
-    folder = "final" if is_final else "drafts"
-    script_path = SCRIPTS_DIR / folder / filename
+Your scripts must be:
+1. Attention-grabbing from the first second
+2. Optimized for the platform's unique style
+3. Include clear call-to-action
+4. Use platform-appropriate language and format
 
-    with open(script_path, 'w', encoding='utf-8') as f:
-        f.write(content)
+Script Structure:
+🎯 HOOK (first 1-2 seconds): Grab attention immediately
+📬 MAIN CONTENT: Deliver value concisely and engagingly
+📢 CALL-TO-ACTION: Clear, specific next step
+# HASHTAGS: 5-8 relevant hashtags including {config['hashtags']}"""
 
-    log_action("save_script", {"filename": filename, "folder": folder})
+        # Enhanced user prompt
+        user_prompt = f"""Create a {duration} {tone} video script about: {topic}
 
-    return f"✅ Script saved to: {script_path}"
+Requirements:
+- Platform: {config['name']}
+- Tone: {tone}
+- Target duration: {duration}
 
-def create_project(project_name, description=""):
+Include:
+1. Visual/scene descriptions in [brackets]
+2. Spoken dialogue or voiceover
+3. Text overlays timing
+4. Music/sound suggestions
+5. Recommended hashtags
+
+Make it engaging, shareable, and optimized for {config['name']}'s algorithm!"""
+
+        # Call OpenAI with retry
+        def generate_script():
+            api_client = get_client()
+            response = api_client.chat.completions.create(
+                model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.8,
+                max_tokens=1500
+            )
+            return response.choices[0].message.content
+
+        script = retry_with_backoff(generate_script, max_retries=3)
+
+        log_action("create_script", {
+            "topic": topic,
+            "platform": platform,
+            "duration": duration
+        }, success=True)
+
+        update_tool_stats("create_script", success=True)
+
+        # Add platform banner to output
+        result = f"\n{config['emoji']} Script generated for {config['name']}\n"
+        result += f"{'─'*50}\n"
+        result += script
+        result += f"\n{'─'*50}\n"
+        return result
+
+    except Exception as e:
+        log_action("create_script", {"topic": topic, "error": str(e)}, success=False)
+        update_tool_stats("create_script", success=False)
+        return f"❌ Error generating script: {str(e)}"
+
+def save_script(content: str, filename: Optional[str] = None, is_final: bool = False) -> str:
+    """Save script with auto-generated filename if needed"""
+    try:
+        folder = "final" if is_final else "drafts"
+        script_dir = SCRIPTS_DIR / folder
+        script_dir.mkdir(parents=True, exist_ok=True)
+
+        # Auto-generate filename if not provided
+        if not filename:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"script_{timestamp}.txt"
+
+        # Ensure .txt extension
+        if not filename.endswith('.txt'):
+            filename += '.txt'
+
+        script_path = script_dir / filename
+
+        # Save content
+        with open(script_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+
+        log_action("save_script", {"filename": filename, "folder": folder}, success=True)
+        update_tool_stats("save_script", success=True)
+
+        return f"✅ Script saved to: {script_path}"
+
+    except Exception as e:
+        log_action("save_script", {"error": str(e)}, success=False)
+        update_tool_stats("save_script", success=False)
+        return f"❌ Error saving script: {str(e)}"
+
+def create_project(project_name: str, description: str = "") -> str:
     """Create a new video project with organized folders"""
-    project_path = PROJECTS_DIR / project_name
+    try:
+        # Sanitize project name
+        safe_name = "".join(c for c in project_name if c.isalnum() or c in (' ', '-', '_')).strip()
+        if not safe_name:
+            raise ValueError("Project name cannot be empty or only special characters")
 
-    folders = ["raw", "edited", "final"]
-    for folder in folders:
-        (project_path / folder).mkdir(parents=True, exist_ok=True)
+        project_path = PROJECTS_DIR / safe_name
 
-    metadata = {
-        "name": project_name,
-        "description": description,
-        "created_at": datetime.now().isoformat(),
-        "status": "active",
-        "files": {
-            "raw": [],
-            "edited": [],
-            "final": []
+        if project_path.exists():
+            return f"⚠️  Project '{safe_name}' already exists!"
+
+        # Create folder structure
+        folders = ["raw", "edited", "final"]
+        for folder in folders:
+            (project_path / folder).mkdir(parents=True, exist_ok=True)
+
+        # Create metadata
+        metadata = {
+            "name": safe_name,
+            "description": description.strip(),
+            "created_at": datetime.now().isoformat(),
+            "status": "active",
+            "files": {
+                "raw": [],
+                "edited": [],
+                "final": []
+            },
+            "statistics": {
+                "total_files": 0,
+                "last_updated": datetime.now().isoformat()
+            }
         }
-    }
 
-    with open(project_path / "metadata.json", 'w', encoding='utf-8') as f:
-        json.dump(metadata, f, indent=2, ensure_ascii=False)
+        with open(project_path / "metadata.json", 'w', encoding='utf-8') as f:
+            json.dump(metadata, f, indent=2, ensure_ascii=False)
 
-    log_action("create_project", {"project_name": project_name})
+        log_action("create_project", {"project_name": safe_name}, success=True)
+        update_tool_stats("create_project", success=True)
 
-    return f"✅ Project created: {project_name}\n   Folders: {', '.join(folders)}"
+        return f"✅ Project created: '{safe_name}'\n   Folders: {', '.join(folders)}\n   Path: {project_path}"
 
-def organize_video_file(source_path, project_name, file_type):
-    """Move video file to project folder"""
-    source = Path(source_path)
-    project_path = PROJECTS_DIR / project_name
+    except Exception as e:
+        log_action("create_project", {"error": str(e)}, success=False)
+        update_tool_stats("create_project", success=False)
+        return f"❌ Error creating project: {str(e)}"
 
-    if not source.exists():
-        return f"❌ Error: Source file not found: {source_path}"
+def organize_video_file(source_path: str, project_name: str, file_type: str) -> str:
+    """Organize video file with validation and metadata update"""
+    try:
+        source = Path(source_path).resolve()
+        project_path = PROJECTS_DIR / project_name
 
-    if not project_path.exists():
-        return f"❌ Error: Project not found: {project_name}"
+        # Validate inputs
+        if not source.exists():
+            raise FileNotFoundError(f"Source file not found: {source_path}")
 
-    dest_folder = project_path / file_type
-    dest_path = dest_folder / source.name
+        if not project_path.exists():
+            raise FileNotFoundError(f"Project not found: {project_name}")
 
-    shutil.copy2(source, dest_path)
+        if file_type not in ["raw", "edited", "final"]:
+            raise ValueError(f"Invalid file_type: {file_type}")
 
-    # Update metadata
-    metadata_path = project_path / "metadata.json"
-    with open(metadata_path, 'r', encoding='utf-8') as f:
-        metadata = json.load(f)
+        dest_folder = project_path / file_type
+        dest_path = dest_folder / source.name
 
-    metadata["files"][file_type].append({
-        "filename": source.name,
-        "added_at": datetime.now().isoformat()
-    })
+        # Check if file already exists
+        if dest_path.exists():
+            return f"⚠️  File '{source.name}' already exists in {project_name}/{file_type}/"
 
-    with open(metadata_path, 'w', encoding='utf-8') as f:
-        json.dump(metadata, f, indent=2, ensure_ascii=False)
+        # Copy file
+        shutil.copy2(source, dest_path)
 
-    log_action("organize_video_file", {"project": project_name, "file_type": file_type})
+        # Update metadata
+        metadata_path = project_path / "metadata.json"
+        with open(metadata_path, 'r', encoding='utf-8') as f:
+            metadata = json.load(f)
 
-    return f"✅ File organized: {source.name} → {project_name}/{file_type}/"
+        metadata["files"][file_type].append({
+            "filename": source.name,
+            "added_at": datetime.now().isoformat(),
+            "size": source.stat().st_size
+        })
 
-def list_projects():
-    """List all projects"""
-    if not PROJECTS_DIR.exists():
-        return "No projects yet. Create your first project!"
+        metadata["statistics"]["total_files"] += 1
+        metadata["statistics"]["last_updated"] = datetime.now().isoformat()
 
-    projects = [d for d in PROJECTS_DIR.iterdir() if d.is_dir()]
+        with open(metadata_path, 'w', encoding='utf-8') as f:
+            json.dump(metadata, f, indent=2, ensure_ascii=False)
 
-    if not projects:
-        return "No projects yet."
+        log_action("organize_video_file", {
+            "project": project_name,
+            "file_type": file_type,
+            "filename": source.name
+        }, success=True)
 
-    result = f"\n🎬 Found {len(projects)} project(s):\n\n"
+        update_tool_stats("organize_video_file", success=True)
 
-    for project in projects:
-        metadata_path = project / "metadata.json"
-        if metadata_path.exists():
-            with open(metadata_path, 'r', encoding='utf-8') as f:
-                metadata = json.load(f)
+        return f"✅ File organized: '{source.name}' → {project_name}/{file_type}/"
 
-            result += f"  📁 {metadata['name']}\n"
-            result += f"      Status: {metadata['status']}\n"
-            result += f"      Raw: {len(metadata['files']['raw'])} | "
-            result += f"Edited: {len(metadata['files']['edited'])} | "
-            result += f"Final: {len(metadata['files']['final'])}\n"
-            result += f"      Created: {metadata['created_at'][:10]}\n\n"
+    except Exception as e:
+        log_action("organize_video_file", {"error": str(e)}, success=False)
+        update_tool_stats("organize_video_file", success=False)
+        return f"❌ Error organizing file: {str(e)}"
 
-    return result
+def list_projects() -> str:
+    """List all projects with detailed statistics"""
+    try:
+        if not PROJECTS_DIR.exists():
+            return "No projects yet. Create your first project!"
+
+        projects = [d for d in PROJECTS_DIR.iterdir() if d.is_dir()]
+
+        if not projects:
+            return "No projects yet."
+
+        result = f"\n🎬 Found {len(projects)} project(s):\n\n"
+
+        for project in sorted(projects):
+            metadata_path = project / "metadata.json"
+            if metadata_path.exists():
+                with open(metadata_path, 'r', encoding='utf-8') as f:
+                    metadata = json.load(f)
+
+                raw_count = len(metadata['files']['raw'])
+                edited_count = len(metadata['files']['edited'])
+                final_count = len(metadata['files']['final'])
+
+                result += f"  📁 {metadata['name']}\n"
+                result += f"      Status: {metadata['status']}\n"
+                result += f"      Files: {Colors.GREEN}Raw: {raw_count}{Colors.END} | {Colors.YELLOW}Edited: {edited_count}{Colors.END} | {Colors.BLUE}Final: {final_count}{Colors.END}\n"
+                if metadata.get('description'):
+                    result += f"      Description: {metadata['description']}\n"
+                result += f"      Created: {metadata['created_at'][:10]}\n\n"
+
+        log_action("list_projects", {"count": len(projects)}, success=True)
+        return result
+
+    except Exception as e:
+        log_action("list_projects", {"error": str(e)}, success=False)
+        return f"❌ Error listing projects: {str(e)}"
+
+def show_stats() -> str:
+    """Display usage statistics"""
+    try:
+        stats = load_statistics()
+        show_statistics(stats)
+        log_action("show_stats", {}, success=True)
+        return "✅ Statistics displayed above"
+    except Exception as e:
+        return f"❌ Error showing statistics: {str(e)}"
 
 # ============= AGENT LOOP =============
 
@@ -339,111 +788,175 @@ available_functions = {
     "save_script": save_script,
     "create_project": create_project,
     "organize_video_file": organize_video_file,
-    "list_projects": list_projects
+    "list_projects": list_projects,
+    "show_stats": show_stats
 }
 
-def run_agent(user_message, max_iterations=5):
-    """Main agent loop"""
+def run_agent(user_message: str, max_iterations: int = 5) -> str:
+    """Enhanced main agent loop with statistics and error handling"""
 
-    system_prompt = f"""You are a Video Creator Agent - an AI assistant for content creators.
+    start_time = time.time()
+    stats = load_statistics()
 
-You support these platforms:
-- TikTok (short, trendy, 15-60 seconds)
-- Instagram Reels (aesthetic, 15-90 seconds)
-- Xiaohongshu (小红书) (lifestyle, 30-180 seconds)
-- YouTube Shorts (SEO-focused, 15-60 seconds)
+    try:
+        # Enhanced system prompt
+        system_prompt = f"""You are a Video Creator Agent v2.0 - an advanced AI assistant for content creators.
 
-Your capabilities:
-- Save and organize video ideas with tags
-- Generate platform-specific scripts
-- Create and manage video projects
-- Organize video files (raw → edited → final)
-- Track project history
+{Colors.BOLD}SUPPORTED PLATFORMS:{Colors.END}
+🎵 TikTok - Short, trendy, 15-60s
+📸 Instagram Reels - Aesthetic, 15-90s
+📕 小红书 (Xiaohongshu) - Lifestyle, 30-180s
+🎬 YouTube Shorts - SEO-focused, 15-60s
 
-Be concise, helpful, and action-oriented. Use emojis when appropriate."""
+{Colors.BOLD}YOUR CAPABILITIES:{Colors.END}
+💡 Save and organize video ideas with smart tags
+📝 Generate platform-specific, engaging scripts
+🎬 Create and manage video project structures
+📁 Organize video files (raw → edited → final)
+📊 Track and display usage statistics
 
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_message}
-    ]
+{Colors.BOLD}YOUR APPROACH:{Colors.END}
+- Be concise, helpful, and action-oriented
+- Use emojis to make responses engaging
+- Validate inputs before processing
+- Suggest related actions when appropriate
+- Always explain what you're doing and why
 
-    print(f"\n{'='*60}")
-    print(f"🎬 Video Creator Agent")
-    print(f"{'='*60}")
-    print(f"📝 Task: {user_message}")
-    print(f"{'='*60}\n")
+{Colors.BOLD}WHEN MULTI-STEP TASKS:{Colors.END}
+1. Break down complex requests into steps
+2. Execute tools in logical order
+3. Confirm each step's completion
+4. Provide clear next steps
 
-    for iteration in range(max_iterations):
-        print(f"🔄 Iteration {iteration + 1}/{max_iterations}")
+Remember: You're not just a chatbot - you're an AGENT that takes action!"""
 
-        response = client.chat.completions.create(
-            model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
-            messages=messages,
-            tools=tools
-        )
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message}
+        ]
 
-        message = response.choices[0].message
-        messages.append(message)
+        print_header("🎬 VIDEO CREATOR AGENT v2.0")
+        print(f"{Colors.BOLD}📝 Task:{Colors.END} {user_message}")
+        print(f"{Colors.CYAN}{'─'*70}{Colors.END}\n")
 
-        if not message.tool_calls:
-            print(f"\n✅ Final Answer:\n")
-            print(f"{'='*60}")
-            return message.content
+        # Agent loop with enhanced output
+        for iteration in range(max_iterations):
+            print(f"{Colors.YELLOW}🔄 Iteration {iteration + 1}/{max_iterations}{Colors.END}")
 
-        print(f"🔧 Tool calls: {len(message.tool_calls)}")
+            # Call LLM
+            def get_llm_response():
+                api_client = get_client()
+                return api_client.chat.completions.create(
+                    model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+                    messages=messages,
+                    tools=tools
+                )
 
-        for tool_call in message.tool_calls:
-            function_name = tool_call.function.name
-            function_args = json.loads(tool_call.function.arguments)
+            response = retry_with_backoff(get_llm_response, max_retries=2)
+            message = response.choices[0].message
+            messages.append(message)
 
-            print(f"   → {function_name}({json.dumps(function_args, ensure_ascii=False)})")
+            # Check if agent wants to use tools
+            if not message.tool_calls:
+                print(f"\n{Colors.GREEN}✅ Task completed!{Colors.END}\n")
+                print(f"{Colors.BOLD}{Colors.CYAN}{'='*70}{Colors.END}")
+                result = message.content
 
-            try:
-                function_response = available_functions[function_name](**function_args)
-            except Exception as e:
-                function_response = f"Error: {str(e)}"
+                # Update statistics
+                stats.successful_runs += 1
+                stats.total_runs += 1
+                stats.last_run = datetime.now().isoformat()
+                save_statistics(stats)
 
-            print(f"   ← {function_response[:100]}{'...' if len(function_response) > 100 else ''}\n")
+                return result
 
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tool_call.id,
-                "content": function_response
-            })
+            # Execute tool calls
+            print(f"{Colors.BLUE}🔧 Executing {len(message.tool_calls)} tool call(s){Colors.END}\n")
 
-    return "Max iterations reached"
+            for tool_call in message.tool_calls:
+                function_name = tool_call.function.name
+                function_args = json.loads(tool_call.function.arguments)
+
+                print_tool_call(function_name, function_args)
+
+                # Execute function with error handling
+                try:
+                    function_response = available_functions[function_name](**function_args)
+                    print_tool_result(function_response, success=True)
+                except Exception as e:
+                    function_response = f"Error executing {function_name}: {str(e)}"
+                    print_tool_result(function_response, success=False)
+
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": function_response
+                })
+
+        # Max iterations reached
+        stats.total_runs += 1
+        stats.failed_runs += 1
+        save_statistics(stats)
+
+        return "⚠️  Max iterations reached. Task may be incomplete."
+
+    except Exception as e:
+        stats.total_runs += 1
+        stats.failed_runs += 1
+        save_statistics(stats)
+        return f"❌ Agent error: {str(e)}"
+
+    finally:
+        # Update total duration
+        duration = time.time() - start_time
+        stats = load_statistics()
+        stats.total_duration += duration
+        save_statistics(stats)
+
+        print(f"\n{Colors.CYAN}⏱️  Completed in {duration:.2f} seconds{Colors.END}")
+        print(f"{Colors.BOLD}{Colors.CYAN}{'='*70}{Colors.END}\n")
 
 # ============= CLI =============
 
 if __name__ == "__main__":
-    import sys
+    print(f"""
+{Colors.BOLD}{Colors.CYAN}
+╔═══════════════════════════════════════════════════════════════════╗
+║                                                                   ║
+║           🎬 VIDEO CREATOR AGENT v2.0 🎬                         ║
+║       AI Assistant for Content Creators                         ║
+║                                                                   ║
+╚═══════════════════════════════════════════════════════════════════╝
+{Colors.END}
+{Colors.GREEN}Supported platforms:{Colors.END} TikTok, Instagram Reels, Xiaohongshu, YouTube Shorts
 
-    print("""
-================================================================
-              VIDEO CREATOR AGENT v1.0
-          AI Assistant for Content Creators
-================================================================
-
-Supported platforms: TikTok, Instagram Reels, Xiaohongshu, YouTube Shorts
-
-Examples:
-  * "Save idea: morning routine for TikTok"
-  * "Create a script about productivity tips for Instagram"
-  * "Create project called 'Summer Vlog'"
-  * "List all my ideas"
-  * "Show all projects"
+{Colors.YELLOW}Examples:{Colors.END}
+  * "Save idea: morning routine for TikTok with tags productivity"
+  * "Create a 30s energetic script about productivity tips for Instagram"
+  * "Create project called 'Summer Vlog' about travel"
+  * "List all my ideas for TikTok"
+  * "Show me my statistics"
+  * "Organize video.mp4 to Summer Vlog as raw"
     """)
 
+    # Interactive or command-line mode
     if len(sys.argv) < 2:
-        print("\n💡 Usage: python agent.py \"your task here\"")
-        print("   Or run interactively and type your task:")
-        task = input("\n🎬 Your task: ")
+        print(f"{Colors.CYAN}💡 Interactive mode{Colors.END}")
+        task = input(f"\n{Colors.BOLD}🎬 Your task:{Colors.END} ").strip()
     else:
         task = " ".join(sys.argv[1:])
 
-    if task.strip():
-        result = run_agent(task)
-        print(f"\n{result}")
-        print(f"\n{'='*60}\n")
+    if task:
+        try:
+            result = run_agent(task)
+            if result:
+                print(f"\n{Colors.BOLD}{Colors.GREEN}📋 Result:{Colors.END}")
+                print(f"{Colors.CYAN}{'─'*70}{Colors.END}")
+                print(result)
+                print(f"{Colors.CYAN}{'─'*70}{Colors.END}\n")
+        except KeyboardInterrupt:
+            print(f"\n{Colors.YELLOW}⚠️  Interrupted by user{Colors.END}\n")
+        except Exception as e:
+            print(f"\n{Colors.RED}❌ Fatal error: {e}{Colors.END}\n")
     else:
-        print("❌ No task provided. Exiting.")
+        print(f"{Colors.RED}❌ No task provided. Exiting.{Colors.END}\n")
