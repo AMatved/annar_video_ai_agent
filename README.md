@@ -1,14 +1,34 @@
-# 🎬 Video Creator Agent
+# 🎬 Video Creator Agent v3.0
 
-**AI Assistant for Content Creators** - Supporting TikTok, Instagram Reels, 小红书 (Xiaohongshu), and YouTube Shorts
+**AI-Powered Assistant for Content Creators** - Supporting TikTok, Instagram Reels, Xiaohongshu, and YouTube Shorts
 
 ## 🚀 Features
 
-- 💡 **Idea Management** - Save and organize video ideas with tags
+### Core Capabilities
+- 💡 **Idea Management** - Save and organize video ideas with smart tags
 - 📝 **Script Generation** - AI-powered platform-specific scripts
 - 🎬 **Project Management** - Organize video files (raw → edited → final)
-- 📊 **History Tracking** - Complete activity log
-- 🌐 **Multi-Platform** - Optimized for different social platforms
+- 📊 **Analytics** - Usage statistics and activity tracking
+- 🌐 **Multi-Platform** - Optimized for 4 major social platforms
+
+### 🆕 New in v3.0
+
+#### AI Generation Tools
+- 🎯 **Viral Titles** - Generate clickbait titles optimized for engagement
+- 📄 **Social Descriptions** - Create post descriptions with hashtags
+- 🎨 **Thumbnail Ideas** - Visual concepts for video thumbnails
+- 🔍 **SEO Optimization** - Optimize content for discoverability
+- 📅 **Content Planning** - Generate 7-day content calendars
+
+#### Content Management
+- 📤 **Export Ideas** - Backup all ideas to JSON
+- 📥 **Import Ideas** - Import from JSON files
+- 📋 **Script Templates** - Save reusable script templates
+- 🔍 **History Search** - Search through all past actions
+
+#### External Data
+- #️⃣ **Trending Hashtags** - Get popular hashtags for your niche
+- ⏰ **Best Post Times** - Analyze optimal posting schedules
 
 ## 📋 Requirements
 
@@ -18,6 +38,10 @@
 ## 🔧 Setup
 
 ```bash
+# Clone the repository
+git clone https://github.com/THU-SIGS-AIID/annar_video_ai_agent.git
+cd annar_video_ai_agent
+
 # Install dependencies
 pip install -r requirements.txt
 
@@ -34,83 +58,168 @@ export OPENAI_MODEL="gpt-4o-mini"  # optional
 python agent.py
 ```
 
-### Direct Command
+### Command Line
 ```bash
 python agent.py "Save idea: morning routine for TikTok"
 ```
 
 ## 💬 Example Commands
 
+### Core Functions
 ```bash
 # Ideas
-"Save idea: productivity tips for Instagram"
-"List all my TikTok ideas"
-"Show ideas with tag 'lifestyle'"
+python agent.py "Save idea: productivity tips for Instagram with tags lifestyle"
+python agent.py "List all my TikTok ideas"
+python agent.py "Show ideas with tag 'fitness'"
 
 # Scripts
-"Create a 30 second script about morning routine"
-"Write script for Xiaohongshu about travel tips"
+python agent.py "Create a 30s script about productivity tips"
+python agent.py "Write script for Instagram about travel tips"
 
 # Projects
-"Create project called 'Summer Vlog'"
-"Show all my projects"
-"Organize video.mp4 to project 'Summer Vlog' as raw"
+python agent.py "Create project called 'Summer Vlog'"
+python agent.py "Show all my projects"
+```
+
+### AI Generation (New!)
+```bash
+# Generate viral titles
+python agent.py "Generate 5 viral titles for cooking TikToks"
+
+# Create social descriptions
+python agent.py "Generate description for fitness video with hashtags"
+
+# Get thumbnail ideas
+python agent.py "Create 3 thumbnail concepts for gaming content"
+
+# SEO optimization
+python agent.py "Optimize my video content for SEO with keywords: ai, future"
+```
+
+### Content Management (New!)
+```bash
+# Content planning
+python agent.py "Create 7-day content plan for tech niche on YouTube Shorts"
+
+# Export/Import
+python agent.py "Export all my ideas to backup"
+python agent.py "Import ideas from backup.json"
+
+# Search history
+python agent.py "Search history for 'script' actions"
+```
+
+### External Data (New!)
+```bash
+# Trending hashtags
+python agent.py "Get trending hashtags for gaming niche on TikTok"
+
+# Best posting times
+python agent.py "Analyze best posting times for young adults on Instagram"
 ```
 
 ## 📁 Project Structure
 
 ```
 video_creator_agent/
-├── ideas/              # Your video ideas
+├── agent.py              # Main agent with 18 tools
+├── config.json           # Configuration
+├── requirements.txt      # Dependencies
+├── README.md            # Documentation
+├── website/             # Presentation website
+│   └── index.html       # Landing page
+├── DESIGN_PROPOSAL.md   # Architecture documentation
+├── ideas/               # Your video ideas
+│   └── ideas.json      # Ideas database
 ├── scripts/            # Generated scripts
-│   ├── drafts/        # Work in progress
-│   ├── final/         # Ready to use
+│   ├── drafts/        # Work-in-progress
+│   ├── final/         # Ready scripts
 │   └── templates/     # Script templates
 ├── projects/          # Video projects
-│   └── project_name/
+│   └── [project]/
 │       ├── raw/       # Original footage
-│       ├── edited/    # Work in progress
+│       ├── edited/    # Work-in-progress
 │       └── final/     # Completed videos
-├── history/           # Activity log
-└── agent.py           # Main agent
+└── history/           # Activity tracking
+    └── activity_log.json # Agent log
 ```
 
-## 🛠️ Agent Tools
+## 🛠️ Available Tools (18 Total)
 
-| Tool | Description |
-|------|-------------|
-| `save_idea` | Save idea with title, tags, platform |
-| `list_ideas` | Browse and filter ideas |
-| `create_script` | Generate AI scripts |
-| `save_script` | Save script to file |
-| `create_project` | Create new project |
-| `organize_video_file` | Move files to project folders |
-| `list_projects` | Show all projects |
+| Tool | Category | Description |
+|------|----------|-------------|
+| `save_idea` | Core | Save video ideas with tags and platform |
+| `list_ideas` | Core | Browse and filter saved ideas |
+| `create_script` | Core | Generate AI-powered scripts |
+| `save_script` | Core | Save scripts to drafts/final folders |
+| `create_project` | Core | Create video project structure |
+| `organize_video_file` | Core | Move files to project folders |
+| `list_projects` | Core | Show all projects with stats |
+| `show_stats` | Core | Display usage statistics |
+| `generate_titles` | AI | Create viral video titles |
+| `generate_description` | AI | Generate social media descriptions |
+| `generate_thumbnails_ideas` | AI | Design thumbnail concepts |
+| `optimize_seo` | AI | Optimize content for SEO |
+| `generate_content_plan` | Management | Create content calendars |
+| `export_ideas` | Management | Backup ideas to JSON |
+| `import_ideas` | Management | Import ideas from JSON |
+| `create_script_template` | Management | Save script templates |
+| `search_history` | Management | Search past actions |
+| `get_trending_hashtags` | Data | Get trending hashtags |
+| `analyze_best_post_time` | Data | Best posting times analysis |
 
 ## 🌟 Supported Platforms
 
-- 🎵 **TikTok** - Short, trendy content (15-60s)
-- 📸 **Instagram Reels** - Aesthetic content (15-90s)
-- 📕 **小红书** - Lifestyle content (30-180s)
-- 🎬 **YouTube Shorts** - SEO-focused (15-60s)
+| Platform | Duration | Style | Key Features |
+|----------|----------|-------|--------------|
+| **TikTok** | 15-60s | Trendy, fast-paced | Hook in 1s, trending sounds |
+| **Instagram** | 15-90s | Aesthetic, polished | High quality, captions |
+| **Xiaohongshu** | 30-180s | Lifestyle, authentic | Storytelling, personal |
+| **YouTube Shorts** | 15-60s | SEO-focused | Keywords, thumbnails |
 
-## 📊 What Makes This an AGENT (not just chatbot)?
+## 📊 What Makes This an AGENT (Not Chatbot)
 
-✅ **Tools** - Can perform actions (save files, create folders)
-✅ **Loop** - Multi-step reasoning (think → act → analyze → repeat)
-✅ **Memory** - Remembers ideas, projects, history
-✅ **Autonomy** - Can complete complex tasks independently
+| Feature | Chatbot | This Agent |
+|---------|---------|------------|
+| **Actions** | ❌ Text only | ✅ 18 executable tools |
+| **Autonomy** | ❌ User-dependent | ✅ Multi-step reasoning |
+| **Memory** | ❌ Session-only | ✅ Persistent storage |
+| **Architecture** | ❌ Single-turn | ✅ ReAct loop (think → act → repeat) |
+| **Integration** | ❌ Isolated | ✅ File system + AI APIs |
 
-## 🔐 Security
+## 🔐 Security & Privacy
 
-- All files stored locally
-- Activity logging for transparency
-- Safe file operations with error handling
+- All data stored locally
+- No telemetry or data collection
+- API keys via environment variables only
+- Safe file operations with validation
+
+## 📖 Documentation
+
+- [Design Proposal](DESIGN_PROPOSAL.md) - Architecture and technical details
+- [Website](website/index.html) - Interactive demo and features overview
+
+## 🧪 Testing
+
+Run the test suite to verify functionality:
+```bash
+python test_agent.py
+```
+
+## 🤝 Contributing
+
+Contributions welcome! Please feel free to submit issues or pull requests.
 
 ## 📝 License
 
-MIT License - Feel free to use and modify!
+MIT License - See LICENSE file for details
+
+## 🎓 Academic Use
+
+This project was developed as part of the AI Agent Design course at Tsinghua University.
 
 ---
 
 **Made with ❤️ for Content Creators**
+
+Powered by OpenAI GPT-4o-mini

@@ -47,3 +47,8 @@ scripts/final/
 
 # Logs
 *.log
+.env
+file.env.txt
+.vscode/
+__pycache__/
+*.pyc
