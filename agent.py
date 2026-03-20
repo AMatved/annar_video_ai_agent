@@ -36,12 +36,33 @@ from openai import OpenAI
 load_dotenv()
 
 # ============= MCP INTEGRATION =============
+MCP_AVAILABLE = False
+ddg_search = None
+extract_webpage = None
+
 try:
-    from mcp_tools import TAVILY_TOOLS, web_search, extract_webpage, get_tavily_tools, cleanup_tavily_client
+    from mcp_tools import TAVILY_TOOLS, web_search as ddg_search_temp, extract_webpage as extract_temp
     MCP_AVAILABLE = True
+    ddg_search = ddg_search_temp
+    extract_webpage = extract_temp
 except ImportError:
-    MCP_AVAILABLE = False
     print("⚠️  MCP tools not available. Install mcp package for web search features.")
+
+# ============= TAVILY CLI INTEGRATION (FAST SEARCH) =============
+TAVILY_CLI_AVAILABLE = False
+web_search = None
+
+try:
+    from tavily_integration import smart_web_search, is_tavily_available
+    TAVILY_CLI_AVAILABLE = is_tavily_available()
+    if TAVILY_CLI_AVAILABLE:
+        print("✅ Tavily CLI available - fast web search enabled (~1s)")
+        web_search = smart_web_search
+    else:
+        print("⚠️  Tavily CLI not configured - using DuckDuckGo fallback (~35s)")
+        web_search = smart_web_search if MCP_AVAILABLE else None
+except ImportError:
+    web_search = ddg_search if MCP_AVAILABLE else None
 
 # ============= CONFIGURATION =============
 BASE_DIR = Path(__file__).parent
@@ -1589,12 +1610,12 @@ available_functions = {
     "search_history": search_history,
     "get_trending_hashtags": get_trending_hashtags,
     "analyze_best_post_time": analyze_best_post_time,
-    # MCP tools (if available)
-    "web_search": web_search if MCP_AVAILABLE else lambda **kwargs: "❌ MCP not available",
-    "extract_webpage": extract_webpage if MCP_AVAILABLE else lambda **kwargs: "❌ MCP not available"
+    # Web search tools (tries Tavily CLI first, then DuckDuckGo)
+    "web_search": web_search if (TAVILY_CLI_AVAILABLE or MCP_AVAILABLE) else (lambda: "❌ Web search not available"),
+    "extract_webpage": extract_webpage if (TAVILY_CLI_AVAILABLE or MCP_AVAILABLE) else (lambda: "❌ Web extraction not available")
 }
 
-def run_agent(user_message: str, max_iterations: int = 5) -> str:
+def run_agent(user_message: str, max_iterations: int = 10) -> str:
     """Enhanced main agent loop with statistics and error handling"""
 
     start_time = time.time()

@@ -1,12 +1,23 @@
 """
 MCP Tools Integration for Video Creator Agent
-Adds web search capabilities via Tavily MCP
+Adds web search capabilities via Tavily MCP or DuckDuckGo (free)
 """
 
 import os
 import json
 from typing import Optional
 from mcp_client import SSEMCPClient, create_mcp_client, mcp_tools_to_openai
+
+# Try to import DuckDuckGo (free alternative)
+try:
+    from ddgs import DDGS
+    DUCKDUCKGO_AVAILABLE = True
+except ImportError:
+    try:
+        from duckduckgo_search import DDGS
+        DUCKDUCKGO_AVAILABLE = True
+    except ImportError:
+        DUCKDUCKGO_AVAILABLE = False
 
 
 # Tavily MCP client (lazy initialization)
@@ -70,10 +81,13 @@ def tavily_search(query: str, max_results: int = 10) -> str:
         return "❌ Tavily MCP is not available. Please set TAVILY_REMOTE_SSE_URL environment variable."
 
     try:
-        result = client.call_tool("tavily_search", {
+        result = client.call_tool("tavily-search", {
             "query": query,
             "max_results": max_results
         })
+        # Check if result contains error messages
+        if isinstance(result, str) and ("Invalid API key" in result or "error" in result.lower()):
+            return f"❌ Tavily search failed: {result}"
         return result
     except Exception as e:
         return f"❌ Tavily search error: {str(e)}"
@@ -94,9 +108,12 @@ def tavily_extract(url: str) -> str:
         return "❌ Tavily MCP is not available."
 
     try:
-        result = client.call_tool("tavily_extract", {
+        result = client.call_tool("tavily-extract", {
             "url": url
         })
+        # Check if result contains error messages
+        if isinstance(result, str) and ("Invalid API key" in result or "error" in result.lower()):
+            return f"❌ Tavily extract failed: {result}"
         return result
     except Exception as e:
         return f"❌ Tavily extract error: {str(e)}"
@@ -147,13 +164,71 @@ TAVILY_TOOLS = [
 
 # Enhanced tool implementations with MCP support
 def web_search(query: str, max_results: int = 10) -> str:
-    """Web search tool using Tavily MCP"""
-    return tavily_search(query, max_results)
+    """
+    Web search tool - tries Tavily MCP first, falls back to DuckDuckGo
+    """
+    # Try Tavily MCP first
+    tavily_result = tavily_search(query, max_results)
+    if not tavily_result.startswith("❌"):
+        return tavily_result
+
+    # Fallback to DuckDuckGo (free, no API key needed)
+    if DUCKDUCKGO_AVAILABLE:
+        try:
+            ddgs = DDGS()
+            results = ddgs.text(query, max_results=max_results)
+
+            if not results:
+                return f"❌ No results found for: {query}"
+
+            output = [f"🔎 Search results for: {query}\n"]
+            for i, result in enumerate(results, 1):
+                output.append(f"\n{i}. {result.get('title', 'N/A')}")
+                output.append(f"   URL: {result.get('href', result.get('link', 'N/A'))}")
+                output.append(f"   {result.get('body', result.get('snippet', 'N/A'))}")
+
+            return "\n".join(output)
+        except Exception as e:
+            return f"❌ DuckDuckGo search error: {str(e)}"
+
+    return "❌ Web search not available. Install duckduckgo-search: pip install duckduckgo-search"
 
 
 def extract_webpage(url: str) -> str:
-    """Extract webpage content using Tavily MCP"""
-    return tavily_extract(url)
+    """
+    Extract webpage content using Tavily MCP or simple request
+    """
+    # Try Tavily MCP first
+    tavily_result = tavily_extract(url)
+    if not tavily_result.startswith("❌"):
+        return tavily_result
+
+    # Fallback to simple extraction
+    try:
+        import requests
+        from bs4 import BeautifulSoup
+
+        response = requests.get(url, timeout=10)
+        soup = BeautifulSoup(response.content, 'html.parser')
+
+        # Remove script and style elements
+        for script in soup(["script", "style"]):
+            script.decompose()
+
+        text = soup.get_text()
+
+        # Clean up whitespace
+        lines = (line.strip() for line in text.splitlines())
+        chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+        text = '\n'.join(chunk for chunk in chunks if chunk)
+
+        # Return first 2000 characters
+        if len(text) > 2000:
+            text = text[:2000] + "\n\n... (truncated)"
+
+        return f"📄 Content from {url}:\n\n{text}"
+    except Exception as e:
+        return f"❌ Failed to extract webpage: {str(e)}"
 
 
 def cleanup_tavily_client():
