@@ -64,6 +64,46 @@ try:
 except ImportError:
     web_search = ddg_search if MCP_AVAILABLE else None
 
+# ============= PLATFORM INTEGRATIONS =============
+PLATFORM_INTEGRATION_AVAILABLE = False
+platform_tools = None
+
+# Default fallback functions when import fails
+def _platform_unavailable():
+    return "❌ Platform integrations not available. Please ensure platform_integrations.py is properly installed."
+
+# Initialize with fallback functions
+add_social_account = _platform_unavailable
+list_social_accounts = _platform_unavailable
+post_to_platforms = _platform_unavailable
+get_platform_analytics = _platform_unavailable
+get_registration_help = _platform_unavailable
+discover_trending_topics = _platform_unavailable
+
+try:
+    from platform_integrations import (
+        PLATFORM_TOOLS,
+        add_social_account as _add_social_account,
+        list_social_accounts as _list_social_accounts,
+        post_to_platforms as _post_to_platforms,
+        get_platform_analytics as _get_platform_analytics,
+        get_registration_help as _get_registration_help,
+        discover_trending_topics as _discover_trending_topics
+    )
+    # Use imported functions if available
+    add_social_account = _add_social_account
+    list_social_accounts = _list_social_accounts
+    post_to_platforms = _post_to_platforms
+    get_platform_analytics = _get_platform_analytics
+    get_registration_help = _get_registration_help
+    discover_trending_topics = _discover_trending_topics
+
+    PLATFORM_INTEGRATION_AVAILABLE = True
+    platform_tools = PLATFORM_TOOLS
+    print("✅ Platform integrations enabled - TikTok, Instagram, YouTube automation available")
+except ImportError as e:
+    print(f"⚠️  Platform integrations not available: {e}")
+
 # ============= CONFIGURATION =============
 BASE_DIR = Path(__file__).parent
 IDEAS_FILE = BASE_DIR / "ideas" / "ideas.json"
@@ -644,6 +684,10 @@ tools = [
 # Add MCP tools if available
 if MCP_AVAILABLE:
     tools.extend(TAVILY_TOOLS)
+
+# Add platform integration tools if available
+if PLATFORM_INTEGRATION_AVAILABLE:
+    tools.extend(platform_tools)
 
 # ============= ENHANCED TOOL IMPLEMENTATIONS =============
 
@@ -1612,7 +1656,14 @@ available_functions = {
     "analyze_best_post_time": analyze_best_post_time,
     # Web search tools (tries Tavily CLI first, then DuckDuckGo)
     "web_search": web_search if (TAVILY_CLI_AVAILABLE or MCP_AVAILABLE) else (lambda: "❌ Web search not available"),
-    "extract_webpage": extract_webpage if (TAVILY_CLI_AVAILABLE or MCP_AVAILABLE) else (lambda: "❌ Web extraction not available")
+    "extract_webpage": extract_webpage if (TAVILY_CLI_AVAILABLE or MCP_AVAILABLE) else (lambda: "❌ Web extraction not available"),
+    # Platform integration tools (have built-in fallbacks)
+    "add_social_account": add_social_account,
+    "list_social_accounts": list_social_accounts,
+    "post_to_platforms": post_to_platforms,
+    "get_platform_analytics": get_platform_analytics,
+    "get_registration_help": get_registration_help,
+    "discover_trending_topics": discover_trending_topics
 }
 
 def run_agent(user_message: str, max_iterations: int = 10) -> str:
@@ -1624,6 +1675,8 @@ def run_agent(user_message: str, max_iterations: int = 10) -> str:
     try:
         # Enhanced system prompt
         mcp_features = "\nWEB SEARCH (via MCP):\n🌐 web_search - Search the web for current trends and information\n📄 extract_webpage - Extract content from web pages" if MCP_AVAILABLE else ""
+
+        platform_features = "\nPLATFORM AUTOMATION:\n🔗 add_social_account - Add TikTok, Instagram, YouTube accounts\n📋 list_social_accounts - List all configured accounts\n📤 post_to_platforms - Post videos to social platforms\n📊 get_platform_analytics - Get analytics data\n📖 get_registration_help - Get setup guides for platforms\n🔥 discover_trending_topics - Find trending hashtags" if PLATFORM_INTEGRATION_AVAILABLE else ""
 
         system_prompt = f"""You are a Video Creator Agent v3.0 - an advanced AI assistant for content creators.
 
@@ -1657,6 +1710,7 @@ EXTERNAL DATA:
 #️⃣ get_trending_hashtags - Trending hashtags for platform/niche
 ⏰ analyze_best_post_time - Best posting times analysis
 {mcp_features}
+{platform_features}
 
 YOUR APPROACH:
 - Be concise, helpful, and action-oriented
