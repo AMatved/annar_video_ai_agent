@@ -19,6 +19,8 @@ import {
   Edit2,
   Trash2,
   X,
+  MessageSquare,
+  MoreVertical,
 } from 'lucide-react';
 
 interface Message {
@@ -26,6 +28,14 @@ interface Message {
   role: 'user' | 'assistant';
   content: string;
   timestamp: Date;
+}
+
+interface Chat {
+  id: string;
+  title: string;
+  messages: Message[];
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 interface Task {
@@ -43,7 +53,6 @@ const skills = [
   { name: 'Coding Assistance', icon: Code, color: 'text-green-400' },
 ] as const;
 
-// Move sparkles outside component
 const createSparkles = () =>
   Array.from({ length: 12 }, (_, i) => ({
     id: `sparkle-${i}`,
@@ -56,25 +65,102 @@ const createSparkles = () =>
 
 const initialSparkles = createSparkles();
 
+// Local storage keys
+const CHATS_STORAGE_KEY = 'video-creator-chats';
+const TASKS_STORAGE_KEY = 'video-creator-tasks';
+const CURRENT_CHAT_KEY = 'video-creator-current-chat';
+
 export default function Home() {
-  const [messages, setMessages] = useState<Message[]>([
+  const [chats, setChats] = useState<Chat[]>([
     {
-      id: '1',
-      role: 'assistant',
-      content:
-        "Hi! 👋 I'm your AI assistant. I can help you with:\n\n• Content creation (scripts, titles, descriptions)\n• Social media automation\n• Research & trend analysis\n• Task management\n\nTry saying: 'Create 5 viral TikTok titles' or 'Add task: Plan my content'",
-      timestamp: new Date(),
+      id: 'default-chat',
+      title: 'New Conversation',
+      messages: [
+        {
+          id: '1',
+          role: 'assistant',
+          content:
+            "Hi! 👋 I'm your AI assistant. I can help you with:\n\n• Content creation (scripts, titles, descriptions)\n• Social media automation\n• Research & trend analysis\n• Task management\n\nTry saying: 'Create 5 viral TikTok titles' or 'Add task: Plan my content'",
+          timestamp: new Date(),
+        },
+      ],
+      createdAt: new Date(),
+      updatedAt: new Date(),
     },
   ]);
+  const [currentChatId, setCurrentChatId] = useState<string>('default-chat');
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [activeTab, setActiveTab] = useState<'chat' | 'tasks'>('chat');
   const [tasks, setTasks] = useState<Task[]>([]);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [editedTaskTitle, setEditedTaskTitle] = useState('');
+  const [showChatList, setShowChatList] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const sparkles = useMemo(() => initialSparkles, []);
+
+  // Load chats from localStorage on mount
+  useEffect(() => {
+    const savedChats = localStorage.getItem(CHATS_STORAGE_KEY);
+    const savedTasks = localStorage.getItem(TASKS_STORAGE_KEY);
+    const savedCurrentChat = localStorage.getItem(CURRENT_CHAT_KEY);
+
+    if (savedChats) {
+      try {
+        const parsedChats = JSON.parse(savedChats);
+        // Convert date strings back to Date objects
+        const chatsWithDates = parsedChats.map((chat: any) => ({
+          ...chat,
+          messages: chat.messages.map((msg: any) => ({
+            ...msg,
+            timestamp: new Date(msg.timestamp),
+          })),
+          createdAt: new Date(chat.createdAt),
+          updatedAt: new Date(chat.updatedAt),
+        }));
+        setChats(chatsWithDates);
+      } catch (e) {
+        console.error('Failed to load chats:', e);
+      }
+    }
+
+    if (savedTasks) {
+      try {
+        const parsedTasks = JSON.parse(savedTasks);
+        const tasksWithDates = parsedTasks.map((task: any) => ({
+          ...task,
+          createdAt: new Date(task.createdAt),
+        }));
+        setTasks(tasksWithDates);
+      } catch (e) {
+        console.error('Failed to load tasks:', e);
+      }
+    }
+
+    if (savedCurrentChat) {
+      setCurrentChatId(savedCurrentChat);
+    }
+  }, []);
+
+  // Save chats to localStorage whenever they change
+  useEffect(() => {
+    localStorage.setItem(CHATS_STORAGE_KEY, JSON.stringify(chats));
+  }, [chats]);
+
+  // Save tasks to localStorage
+  useEffect(() => {
+    localStorage.setItem(TASKS_STORAGE_KEY, JSON.stringify(tasks));
+  }, [tasks]);
+
+  // Save current chat ID
+  useEffect(() => {
+    localStorage.setItem(CURRENT_CHAT_KEY, currentChatId);
+  }, [currentChatId]);
+
+  const getCurrentChat = useCallback(() => {
+    return chats.find((chat) => chat.id === currentChatId) || chats[0];
+  }, [chats, currentChatId]);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -82,10 +168,61 @@ export default function Home() {
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages, scrollToBottom]);
+  }, [getCurrentChat()?.messages, scrollToBottom]);
+
+  const handleCreateNewChat = useCallback(() => {
+    const newChat: Chat = {
+      id: `chat-${Date.now()}`,
+      title: 'New Conversation',
+      messages: [
+        {
+          id: `msg-${Date.now()}`,
+          role: 'assistant',
+          content:
+            "Hi! 👋 I'm your AI assistant. How can I help you today?\n\nTry saying:\n• 'Create 5 viral TikTok titles'\n• 'Add task: Plan my content'\n• 'Generate a script for cooking video'",
+          timestamp: new Date(),
+        },
+      ],
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    setChats((prev) => [newChat, ...prev]);
+    setCurrentChatId(newChat.id);
+    setActiveTab('chat');
+  }, []);
+
+  const handleDeleteChat = useCallback((chatId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (chats.length === 1) {
+      // Don't delete the last chat
+      return;
+    }
+
+    setChats((prev) => prev.filter((chat) => chat.id !== chatId));
+
+    // If deleting current chat, switch to another
+    if (chatId === currentChatId) {
+      const remainingChats = chats.filter((chat) => chat.id !== chatId);
+      setCurrentChatId(remainingChats[0].id);
+    }
+  }, [chats, currentChatId]);
+
+  const handleRenameChat = useCallback((chatId: string, newTitle: string) => {
+    setChats((prev) =>
+      prev.map((chat) =>
+        chat.id === chatId
+          ? { ...chat, title: newTitle, updatedAt: new Date() }
+          : chat
+      )
+    );
+  }, []);
 
   const handleSendMessage = useCallback(async () => {
     if (!input.trim()) return;
+
+    const currentChat = getCurrentChat();
+    if (!currentChat) return;
 
     const userMessage: Message = {
       id: `msg-${Date.now()}`,
@@ -94,10 +231,23 @@ export default function Home() {
       timestamp: new Date(),
     };
 
-    setMessages((prev) => [...prev, userMessage]);
+    const updatedMessages = [...currentChat.messages, userMessage];
     const currentInput = input;
     setInput('');
     setIsTyping(true);
+
+    // Update chat with user message
+    setChats((prev) =>
+      prev.map((chat) =>
+        chat.id === currentChatId
+          ? {
+              ...chat,
+              messages: updatedMessages,
+              updatedAt: new Date(),
+            }
+          : chat
+      )
+    );
 
     // Check for task creation commands
     if (currentInput.toLowerCase().includes('add task') || currentInput.toLowerCase().includes('create task')) {
@@ -122,7 +272,17 @@ export default function Home() {
         timestamp: new Date(),
       };
 
-      setMessages((prev) => [...prev, taskMessage]);
+      setChats((prev) =>
+        prev.map((chat) =>
+          chat.id === currentChatId
+            ? {
+                ...chat,
+                messages: [...updatedMessages, taskMessage],
+                updatedAt: new Date(),
+              }
+            : chat
+        )
+      );
       setIsTyping(false);
       return;
     }
@@ -145,7 +305,17 @@ export default function Home() {
         timestamp: new Date(),
       };
 
-      setMessages((prev) => [...prev, assistantMessage]);
+      setChats((prev) =>
+        prev.map((chat) =>
+          chat.id === currentChatId
+            ? {
+                ...chat,
+                messages: [...updatedMessages, assistantMessage],
+                updatedAt: new Date(),
+              }
+            : chat
+        )
+      );
     } catch (error) {
       // Mock response for demo
       const mockResponse = generateMockResponse(currentInput);
@@ -155,11 +325,22 @@ export default function Home() {
         content: mockResponse,
         timestamp: new Date(),
       };
-      setMessages((prev) => [...prev, assistantMessage]);
+
+      setChats((prev) =>
+        prev.map((chat) =>
+          chat.id === currentChatId
+            ? {
+                ...chat,
+                messages: [...updatedMessages, assistantMessage],
+                updatedAt: new Date(),
+              }
+            : chat
+        )
+      );
     } finally {
       setIsTyping(false);
     }
-  }, [input]);
+  }, [input, getCurrentChat, currentChatId]);
 
   const generateMockResponse = (userMessage: string): string => {
     const lower = userMessage.toLowerCase();
@@ -275,6 +456,8 @@ For now, I can help you create and manage tasks. Try:
     }
   }, []);
 
+  const currentChat = getCurrentChat();
+
   return (
     <div className="min-h-screen bg-anime-dark text-anime-light flex flex-col relative overflow-hidden">
       <div className="absolute inset-0 animated-bg opacity-50" />
@@ -311,7 +494,8 @@ For now, I can help you create and manage tasks. Try:
                 if (item === 'Chat') setActiveTab('chat');
               }}
               className={`px-4 py-2 rounded-full text-sm font-medium transition-all duration-300 ${
-                (item === 'Tasks' && activeTab === 'tasks') || (item === 'Chat' && activeTab === 'chat')
+                (item === 'Tasks' && activeTab === 'tasks') ||
+                (item === 'Chat' && activeTab === 'chat')
                   ? 'bg-anime-orange text-anime-dark shadow-glow'
                   : 'bg-anime-dark-secondary hover:bg-anime-orange/20 hover:shadow-glow-soft'
               }`}
@@ -326,31 +510,85 @@ For now, I can help you create and manage tasks. Try:
         <motion.aside
           initial={{ opacity: 0, x: -20 }}
           animate={{ opacity: 1, x: 0 }}
-          className="w-80 p-6 border-r border-gray-800/50 backdrop-blur-sm bg-anime-dark/30 flex flex-col hidden md:flex"
+          className="w-80 p-4 border-r border-gray-800/50 backdrop-blur-sm bg-anime-dark/30 flex flex-col hidden md:flex overflow-y-auto"
         >
-          <div className="flex flex-col items-center text-center mb-6">
+          {/* Chat History Section */}
+          <div className="mb-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wide">Chats</h3>
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={handleCreateNewChat}
+                className="p-1.5 rounded-lg bg-anime-orange/20 hover:bg-anime-orange/30 transition-colors"
+                title="New chat"
+              >
+                <Plus className="w-4 h-4 text-anime-orange" />
+              </motion.button>
+            </div>
+
+            <div className="space-y-2 max-h-64 overflow-y-auto">
+              {chats.map((chat) => (
+                <motion.div
+                  key={chat.id}
+                  whileHover={{ scale: 1.02 }}
+                  onClick={() => setCurrentChatId(chat.id)}
+                  className={`relative group p-3 rounded-xl cursor-pointer transition-all duration-300 ${
+                    currentChatId === chat.id
+                      ? 'bg-gradient-to-r from-anime-orange/20 to-yellow-500/20 border border-anime-orange/30'
+                      : 'bg-anime-dark-secondary/50 hover:bg-anime-dark-secondary border border-transparent'
+                  }`}
+                >
+                  <div className="flex items-start gap-2">
+                    <MessageSquare className={`w-4 h-4 mt-0.5 flex-shrink-0 ${
+                      currentChatId === chat.id ? 'text-anime-orange' : 'text-gray-400'
+                    }`} />
+                    <div className="flex-1 min-w-0">
+                      <h4 className="text-sm font-medium truncate">{chat.title}</h4>
+                      <p className="text-xs text-gray-500 truncate mt-1">
+                        {chat.messages[chat.messages.length - 1]?.content.slice(0, 50)}...
+                      </p>
+                      <p className="text-xs text-gray-600 mt-1">
+                        {chat.updatedAt.toLocaleDateString()} {chat.updatedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </p>
+                    </div>
+                    <button
+                      onClick={(e) => handleDeleteChat(chat.id, e)}
+                      className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-500/20 rounded transition-all"
+                      title="Delete chat"
+                    >
+                      <Trash2 className="w-3 h-3 text-gray-500 hover:text-red-400" />
+                    </button>
+                  </div>
+                </motion.div>
+              ))}
+            </div>
+          </div>
+
+          {/* Agent Info Section */}
+          <div className="flex flex-col items-center text-center mb-6 pt-4 border-t border-gray-800/50">
             <motion.div
               className="relative"
               animate={{ y: [0, -10, 0] }}
               transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
             >
-              <div className="w-32 h-32 rounded-full bg-gradient-to-br from-anime-orange via-yellow-400 to-pink-500 p-1 shadow-glow">
+              <div className="w-24 h-24 rounded-full bg-gradient-to-br from-anime-orange via-yellow-400 to-pink-500 p-1 shadow-glow">
                 <div className="w-full h-full rounded-full bg-anime-dark-secondary flex items-center justify-center">
-                  <Bot className="w-16 h-16 text-anime-orange" />
+                  <Bot className="w-12 h-12 text-anime-orange" />
                 </div>
               </div>
               <div className="absolute -top-2 -right-2">
-                <Sparkles className="w-6 h-6 text-anime-orange animate-pulse" />
+                <Sparkles className="w-5 h-5 text-anime-orange animate-pulse" />
               </div>
             </motion.div>
 
-            <h2 className="text-2xl font-bold mt-4 bg-gradient-to-r from-anime-orange to-yellow-400 bg-clip-text text-transparent">
+            <h2 className="text-xl font-bold mt-3 bg-gradient-to-r from-anime-orange to-yellow-400 bg-clip-text text-transparent">
               Maya AI
             </h2>
-            <p className="text-sm text-gray-400 mt-1">Your creative assistant</p>
+            <p className="text-xs text-gray-400 mt-1">Your creative assistant</p>
           </div>
 
-          <div className="space-y-3">
+          <div className="space-y-2">
             <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wide">Skills</h3>
             {skills.map((skill, index) => (
               <motion.div
@@ -358,15 +596,15 @@ For now, I can help you create and manage tasks. Try:
                 initial={{ opacity: 0, x: -20 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: index * 0.1 }}
-                className="flex items-center gap-3 p-3 rounded-xl bg-anime-dark-secondary/50 glow-border transition-all duration-300 hover:scale-105 cursor-pointer"
+                className="flex items-center gap-2 p-2.5 rounded-xl bg-anime-dark-secondary/50 glow-border transition-all duration-300 hover:scale-105 cursor-pointer"
               >
-                <skill.icon className={`w-5 h-5 ${skill.color}`} />
-                <span className="text-sm font-medium">{skill.name}</span>
+                <skill.icon className={`w-4 h-4 ${skill.color}`} />
+                <span className="text-xs font-medium">{skill.name}</span>
               </motion.div>
             ))}
           </div>
 
-          <div className="mt-auto p-4 rounded-xl bg-gradient-to-br from-anime-orange/10 to-yellow-500/10 border border-anime-orange/20">
+          <div className="mt-auto p-3 rounded-xl bg-gradient-to-br from-anime-orange/10 to-yellow-500/10 border border-anime-orange/20">
             <p className="text-xs text-gray-300 leading-relaxed">
               I help you create content, automate tasks, conduct research, and assist with coding. Let&apos;s create something amazing together! ✨
             </p>
@@ -384,7 +622,7 @@ For now, I can help you create and manage tasks. Try:
                 className="flex-1 flex flex-col"
               >
                 <div className="flex-1 overflow-y-auto p-6 space-y-4">
-                  {messages.map((message) => (
+                  {currentChat?.messages.map((message) => (
                     <motion.div
                       key={message.id}
                       initial={{ opacity: 0, y: 10 }}
