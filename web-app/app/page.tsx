@@ -166,11 +166,12 @@ export default function Home() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, []);
 
-  const currentChat = getCurrentChat();
-
   useEffect(() => {
-    scrollToBottom();
-  }, [currentChat?.messages.length, scrollToBottom]);
+    const chat = getCurrentChat();
+    if (chat?.messages) {
+      scrollToBottom();
+    }
+  }, [getCurrentChat().messages.length, scrollToBottom]);
 
   const handleCreateNewChat = useCallback(() => {
     const newChat: Chat = {
@@ -458,8 +459,6 @@ For now, I can help you create and manage tasks. Try:
     }
   }, []);
 
-  const currentChat = getCurrentChat();
-
   return (
     <div className="min-h-screen bg-anime-dark text-anime-light flex flex-col relative overflow-hidden">
       <div className="absolute inset-0 animated-bg opacity-50" />
@@ -624,7 +623,7 @@ For now, I can help you create and manage tasks. Try:
                 className="flex-1 flex flex-col"
               >
                 <div className="flex-1 overflow-y-auto p-6 space-y-4">
-                  {currentChat?.messages.map((message) => (
+                  {getCurrentChat()?.messages.map((message) => (
                     <motion.div
                       key={message.id}
                       initial={{ opacity: 0, y: 10 }}
